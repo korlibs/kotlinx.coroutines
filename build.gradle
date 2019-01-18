@@ -1,208 +1,227 @@
-/*
- * Copyright 2016-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
- */
+plugins {
+    id 'kotlin-multiplatform' version '1.3.11'
+    id 'com.moowork.node' version '1.2.0'
+}
 
-buildscript {
-    ext.useKotlinSnapshot = rootProject.properties['kotlinSnapshot'] != null
-    if (useKotlinSnapshot) {
-        ext.kotlin_version = '1.2-SNAPSHOT'
-        repositories {
-            maven { url "https://oss.sonatype.org/content/repositories/snapshots" }
-        }
-    }
-    repositories {
-        jcenter()
-        maven { url "https://kotlin.bintray.com/kotlinx" }
-        maven { url "https://kotlin.bintray.com/kotlin-dev" }
-        maven { url "https://kotlin.bintray.com/kotlin-eap" }
-        maven { url "https://jetbrains.bintray.com/kotlin-native-dependencies" }
-        maven { url "https://plugins.gradle.org/m2/" }
-    }
-    configurations.classpath {
-        resolutionStrategy {
-            eachDependency { DependencyResolveDetails details ->
-                if (details.requested.group == 'org.jetbrains.kotlin' && details.requested.name != 'kotlin-native-gradle-plugin') {
-                    // fix version of all dependencies from org.jetbrains.kotlin group
-                    // even when other dependencies require other versions indirectly,
-                    // except kotlin-native, which has its own pre-release versioning
-                    details.useVersion kotlin_version
+repositories {
+    mavenLocal()
+    jcenter()
+    maven { url "https://dl.bintray.com/soywiz/soywiz" }
+}
+
+kotlin {
+    targets {
+        fromPreset(presets.iosX64, 'iosX64')
+        fromPreset(presets.iosArm32, 'iosArm32')
+        fromPreset(presets.iosArm64, 'iosArm64')
+        fromPreset(presets.macosX64, 'macosX64')
+        fromPreset(presets.linuxX64, 'linuxX64')
+        fromPreset(presets.mingwX64, 'mingwX64')
+        fromPreset(presets.jvm, 'jvm')
+        fromPreset(presets.js, 'js') {
+            compilations.main {
+                compileKotlinJs.kotlinOptions {
+                    languageVersion = "1.3"
+                    sourceMap = true
+                    metaInfo = true
+                    moduleKind = "umd"
+                }
+                compileTestKotlinJs.kotlinOptions {
+                    languageVersion = "1.3"
+                    moduleKind = "umd"
                 }
             }
         }
     }
-    dependencies {
-        classpath "org.jfrog.buildinfo:build-info-extractor-gradle:$artifactory_plugin_version"
-        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
-        classpath "org.jetbrains.kotlin:kotlin-native-gradle-plugin:$kotlin_native_version"
-        classpath "org.jetbrains.dokka:dokka-gradle-plugin:$dokka_version"
-        classpath "org.jetbrains.kotlinx:atomicfu-gradle-plugin:$atomicFU_version"
-        classpath "com.jfrog.bintray.gradle:gradle-bintray-plugin:$bintray_version"
-        classpath "com.moowork.gradle:gradle-node-plugin:$gradle_node_version"
 
-        // JMH plugins
-        classpath "com.github.jengelman.gradle.plugins:shadow:4.0.2"
-        classpath "me.champeau.gradle:jmh-gradle-plugin:0.4.7"
-        classpath "net.ltgt.gradle:gradle-apt-plugin:0.10"
-    }
-}
+    // Only enable when loaded in IDEA (we use a property for detection). In CLI that would produce an "expect" error.
 
-allprojects {
-    def deployVersion = properties['DeployVersion']
-    if (deployVersion != null) version = deployVersion
-    if (useKotlinSnapshot) {
-        kotlin_version = '1.2-SNAPSHOT'
-    }
-
-    def name = it.name
-    repositories {
-        /*
-         * google should be first in the repository list because some of the play services
-         * transitive dependencies was removed from jcenter, thus breaking gradle dependency resolution
-         */
-        if (name == "kotlinx-coroutines-play-services") {
-            google()
-        }
-        jcenter()
-        maven { url "https://kotlin.bintray.com/kotlin-dev" }
-        maven { url "https://kotlin.bintray.com/kotlin-eap" }
-        maven { url "https://kotlin.bintray.com/kotlinx" }
-    }
-}
-
-
-// Report Kotlin compiler version when building project
-println("Using Kotlin compiler version: $org.jetbrains.kotlin.config.KotlinCompilerVersion.VERSION")
-
-// --------------- Configure sub-projects with Kotlin sources ---------------
-
-def sourceless = ['site']
-
-static def platformOf(project) {
-    if (project.name.endsWith("-common")) return "common"
-    if (project.name.endsWith("-js")) return "js"
-    if (project.name.endsWith("-native")) return "native"
-    return "jvm"
-}
-
-static def platformLib(base, platform) {
-    if (platform == "jvm") return base
-    return "$base-$platform"
-}
-
-subprojects {
-    if (useKotlinSnapshot) {
-        repositories {
-            maven { url "https://oss.sonatype.org/content/repositories/snapshots" }
+    if (System.getProperty("idea.version") != null) {
+        if (org.apache.tools.ant.taskdefs.condition.Os.isFamily(org.apache.tools.ant.taskdefs.condition.Os.FAMILY_WINDOWS)) {
+            kotlin.targets.fromPreset(kotlin.presets.mingwX64, 'nativeCommon')
+            kotlin.targets.fromPreset(kotlin.presets.mingwX64, 'nativePosix')
+        } else if (org.apache.tools.ant.taskdefs.condition.Os.isFamily(org.apache.tools.ant.taskdefs.condition.Os.FAMILY_MAC)) {
+            kotlin.targets.fromPreset(kotlin.presets.macosX64, 'nativeCommon')
+            kotlin.targets.fromPreset(kotlin.presets.macosX64, 'nativePosix')
+        } else {
+            kotlin.targets.fromPreset(kotlin.presets.linuxX64, 'nativeCommon')
+            kotlin.targets.fromPreset(kotlin.presets.linuxX64, 'nativePosix')
         }
     }
-    configurations.all {
-        resolutionStrategy {
-            eachDependency { DependencyResolveDetails details ->
-                if (details.requested.group == 'org.jetbrains.kotlin') {
-                    details.useVersion kotlin_version
-                }
-            }
-        }
-    }
-}
 
-configure(subprojects.findAll { !sourceless.contains(it.name)  }) {
-    def platform = platformOf(it)
-    apply from: rootProject.file("gradle/compile-${platform}.gradle")
-}
-
-// --------------- Configure sub-projects that are part of the library ---------------
-
-def internal = sourceless + ['benchmarks', 'knit', 'js-stub', 'stdlib-stubs', 'binary-compatibility-validator']
-
-// Reconfigure source sets to avoid long "src/main/kotlin/fqn"
-configure(subprojects.findAll { !it.name.contains(sourceless) && it.name != "benchmarks" }) {
-    def projectName = it.name
     sourceSets {
-        main.kotlin.srcDirs = ['src']
-        test.kotlin.srcDirs = ['test']
-        // todo: do we still need this workaround?
-        if (!projectName.endsWith("-native")) {
-            main.resources.srcDirs = ['resources']
-            test.resources.srcDirs = ['test-resources']
+        nativeCommonMain
+        nativeCommonTest
+        nativePosixMain
+        mingwX64Main {
+            dependsOn nativeCommonMain
+        }
+        mingwX64Test {
+            dependsOn nativeCommonTest
+        }
+        configure([iosX64Main, iosArm32Main, iosArm64Main, macosX64Main, linuxX64Main]) {
+            dependsOn nativeCommonMain
+            dependsOn nativePosixMain
+        }
+        configure([iosX64Test, iosArm32Test, iosArm64Test, macosX64Test, linuxX64Test]) {
+            dependsOn nativeCommonTest
         }
     }
 }
 
-// configure atomicfu
-configure(subprojects.findAll { !internal.contains(it.name) }) {
-    def platform = platformOf(it)
-    apply from: rootProject.file("gradle/atomicfu-${platform}.gradle")
+dependencies {
+    commonMainImplementation "org.jetbrains.kotlin:kotlin-stdlib-common"
+    commonTestImplementation "org.jetbrains.kotlin:kotlin-test-annotations-common"
+    commonTestImplementation "org.jetbrains.kotlin:kotlin-test-common"
+
+    jsMainImplementation "org.jetbrains.kotlin:kotlin-stdlib-js"
+    jsTestImplementation "org.jetbrains.kotlin:kotlin-test-js"
+
+    jvmMainImplementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8"
+    jvmTestImplementation "org.jetbrains.kotlin:kotlin-test"
+    jvmTestImplementation "org.jetbrains.kotlin:kotlin-test-junit"
 }
 
-// configure dependencies on core
-configure(subprojects.findAll { !internal.contains(it.name) && it.name != 'kotlinx-coroutines-core-common'}) {
-    def platform = platformOf(it)
-    def coroutines_core = platformLib("kotlinx-coroutines-core", platform)
+// Javascript test configuration
 
-    if (it.name == coroutines_core) {
-        dependencies {
-            expectedBy project(':kotlinx-coroutines-core-common')
-        }
-    } else {
-        dependencies {
-            compile project(":$coroutines_core")
-            //the only way IDEA can resolve test classes
-            testCompile project(":$coroutines_core").sourceSets.test.output
+def korlibsDir = new File(System.getProperty("user.home"), ".korlibs")
+korlibsDir.mkdirs()
+
+node {
+    version = '8.11.4'
+    download = true
+    workDir = new File(korlibsDir, "nodejs")
+    npmWorkDir = new File(korlibsDir, "npm")
+    yarnWorkDir = new File(korlibsDir, "yarn")
+    nodeModulesDir = new File(korlibsDir, "node_modules")
+}
+
+def jsCompilations = kotlin.targets.js.compilations
+task installMocha(type: NpmTask) {
+    onlyIf { !(new File(node.nodeModulesDir, "mocha")).exists() }
+    args = ["install", "mocha@5.2.0"]
+}
+
+task populateNodeModules {
+    doLast {
+        copy {
+            from "${node.nodeModulesDir}"
+            from jsCompilations.main.output.allOutputs
+            jsCompilations.test.runtimeDependencyFiles.each {
+                if (it.exists() && !it.isDirectory()) {
+                    from zipTree(it.absolutePath).matching { include '*.js' }
+                }
+            }
+            into "$buildDir/node_modules"
         }
     }
 }
 
-// --------------- Configure sub-projects that are published ---------------
+//def dump(obj) { obj.properties.each { println "$it.key : ${it.value.class.name}   ->   $it.value" } }
+//println("-------------")
+//dump(jsCompilations.test.output)
 
-def unpublished = internal + ['kotlinx-coroutines-rx-example', 'example-frontend-js', 'android-unit-tests']
-
-def core_docs_url = "https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/"
-def core_docs_file = "$projectDir/core/kotlinx-coroutines-core/build/dokka/kotlinx-coroutines-core/package-list"
-
-configure(subprojects.findAll { !unpublished.contains(it.name) }) {
-    apply from: rootProject.file('gradle/dokka.gradle')
-    apply from: rootProject.file('gradle/publish-bintray.gradle')
+task runMocha(type: NodeTask, dependsOn: [jsCompilations.test.compileKotlinTaskName, installMocha, populateNodeModules]) {
+    script = file("$buildDir/node_modules/mocha/bin/mocha")
+    args = ["--timeout", "15000", relativePath("${jsCompilations.test.output.classesDirs.first()}/${project.name}_test.js")]
 }
 
-configure(subprojects.findAll { !unpublished.contains(it.name) }) {
-    def platform = platformOf(it)
-    def coroutines_core = platformLib("kotlinx-coroutines-core", platform)
+task jsInstallMochaHeadlessChrome(type: NpmTask) {
+    onlyIf { !(new File("${node.nodeModulesDir}/mocha-headless-chrome")).exists() }
+    args = ["install", "mocha-headless-chrome@2.0.1"]
+}
 
-    if (it.name != coroutines_core) {
-        dokka.dependsOn project(":$coroutines_core").dokka
+task jsTestChrome(type: NodeTask, dependsOn: [jsCompilations.test.compileKotlinTaskName, jsInstallMochaHeadlessChrome, installMocha, populateNodeModules]) {
+    doFirst {
+        new File("$buildDir/node_modules/tests.html").write("""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Mocha Tests</title>
+                <meta charset="utf-8">
+                <link rel="stylesheet" href="mocha/mocha.css">
+                <script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js"></script>
+            </head>
+            <body>
+            <div id="mocha"></div>
+            <script src="mocha/mocha.js"></script>
+            <script>
+                requirejs.config({'baseUrl': '.', 'paths': { 'tests': '../classes/kotlin/js/test/${project.name}_test' }});
+                mocha.setup('bdd');
+                require(['tests'], function() { mocha.run(); });
+            </script>
+            </body>
+            </html>
+        """)
+    }
+    script = file("${node.nodeModulesDir}/mocha-headless-chrome/bin/start")
+    args = ['-f', "$buildDir/node_modules/tests.html"]
+}
 
-        tasks.withType(dokka.getClass()) {
-            externalDocumentationLink {
-                url = new URL(core_docs_url)
-                packageListUrl = new URL("file://$core_docs_file")
+// Only run JS tests if not in windows
+if (!org.apache.tools.ant.taskdefs.condition.Os.isFamily(org.apache.tools.ant.taskdefs.condition.Os.FAMILY_WINDOWS)) {
+    jsTest.dependsOn runMocha
+}
+
+// Fix for https://github.com/srs/gradle-node-plugin/issues/301
+repositories.whenObjectAdded {
+    if (it instanceof IvyArtifactRepository) {
+        metadataSources {
+            artifact()
+        }
+    }
+}
+
+// Publishing
+group 'com.soywiz'
+version projectVersion
+apply plugin: 'maven-publish'
+
+def pomBaseData = {
+    licenses {
+        license {
+            name project.property("project.license.name")
+            url project.property("project.license.url")
+        }
+    }
+    scm {
+        url project.property("project.scm.url")
+    }
+}
+
+def generatePom = { pom ->
+    pom.withXml {
+        def root = it.asNode()
+        root.appendNode('name', project.name)
+        root.appendNode('description', project.property("project.description"))
+        root.appendNode('url', project.property("project.scm.url"))
+        root.children().last() + pomBaseData
+    }
+}
+
+ext.generatePom = generatePom
+
+def publishUser = rootProject.findProperty('BINTRAY_USER') ?: project.findProperty('bintrayUser') ?: System.getenv('BINTRAY_USER')
+def publishPassword = rootProject.findProperty('BINTRAY_KEY') ?: project.findProperty('bintrayApiKey') ?: System.getenv('BINTRAY_API_KEY')
+
+if (publishUser && publishPassword) {
+    publishing {
+        repositories {
+            maven {
+                credentials {
+                    username publishUser
+                    password publishPassword
+                }
+                url "https://api.bintray.com/maven/soywiz/soywiz/${project.property('project.package')}/"
             }
         }
-    }
 
-    if (platform == "jvm") {
-        dokkaJavadoc.dependsOn project(":$coroutines_core").dokka
-        // dump declarations from main JVM module for binary-compatibility-validator
-        compileKotlin {
-            kotlinOptions.freeCompilerArgs += ["-Xdump-declarations-to=${buildDir}/visibilities.json"]
+        configure(publications) {
+            generatePom(pom)
         }
-    }
-
-
-    tasks.withType(org.jetbrains.kotlin.gradle.tasks.AbstractKotlinCompile).all {
-        kotlinOptions.freeCompilerArgs += ["-Xuse-experimental=kotlin.Experimental",
-                                           "-Xuse-experimental=kotlin.experimental.ExperimentalTypeInference",
-                                           "-Xuse-experimental=kotlin.ExperimentalMultiplatform",
-                                           "-Xuse-experimental=kotlinx.coroutines.ExperimentalCoroutinesApi",
-                                           "-Xuse-experimental=kotlinx.coroutines.ObsoleteCoroutinesApi",
-                                           "-Xuse-experimental=kotlinx.coroutines.InternalCoroutinesApi",
-                                           "-progressive"]
     }
 }
 
-// main deployment task
-task deploy(dependsOn: getTasksByName("bintrayUpload", true) + getTasksByName("publishNpm", true))
-
-apply plugin: 'base'
-
-clean.dependsOn gradle.includedBuilds.collect { it.task(':clean') }
+if (project.file('build.project.gradle').exists()) {
+    apply from: project.file('build.project.gradle')
+}
